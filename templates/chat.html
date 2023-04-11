@@ -1,0 +1,231 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="message-box">
+    <h2>Chat Messages</h2>
+    <div class="messages" id="messages"></div>
+    <div class="input-box">
+        <input type="text" rows="3" placeholder="Enter message" name="input" id="input"/>
+        <button type="button" name="send" id="send-btn" onclick="send_message()">
+            Send
+        </button>
+    </div>
+</div>
+<script type="text/javascript">
+    // Connect to socketio
+    var socketio = io();
+
+    let crypto = window.crypto;
+    // Need encoder and decoder for message that is sent
+    let encoder = new TextEncoder();
+    let decoder = new TextDecoder();
+
+    // Keep track of messages sent since key was generated, generate new key after 5
+    let messagesSent = 0;
+
+    var keyPair;
+    var otherPublic;
+    var secretKey = null;
+
+    const messages = document.getElementById("messages");
+
+    
+
+    /*
+        Function to post a simple status message
+    */
+    const post_status = (name, msg) => {
+        const content = `
+        <div class="text">
+            <span>
+                ${name} ${msg}
+            </span>
+        </div>
+        `
+        
+        messages.innerHTML += content;
+    };
+
+    /*
+        Function to post a sent and received message
+    */
+    const post_message = async (name, msg, iv, recvBool) => {
+        let ciphertext = decoder.decode(msg);
+
+        // Print ciphertext for both members
+        const contentCipher = `
+        <div class="text">
+            <span>
+                ${name} (Encrypted): ${ciphertext}
+            </span>
+        </div>
+        `
+        
+        messages.innerHTML += contentCipher;
+
+        // If client is the receiver, also print the decrypted text
+        if (recvBool) {
+            // Decrypt the message using key and same IV
+            const decryptedMsg = await crypto.subtle.decrypt(
+                {
+                    name: "AES-GCM",
+                    iv
+                },
+                secretKey,
+                msg
+            );
+
+            // Decode the decrypted message before printing
+            let decodedMsg = decoder.decode(decryptedMsg);
+
+            const contentDecrypted = `
+            <div class="text">
+                <span>
+                    ${name} (Decrypted): ${decodedMsg}
+                </span>
+            </div>
+            `
+
+            messages.innerHTML += contentDecrypted;
+
+            // Increment total messages sent for receiver
+            messagesSent += 1;
+
+            // If 5 messages reached, send event for keygen and reset count
+            if (messagesSent == 5){
+                socketio.emit("keygen");
+                messagesSent = 0;
+            }
+        }
+    };
+
+    /*
+        Listen for default message event, post message with name and message
+    */
+    socketio.on("message", (data) => {
+        // Check for the type of the message to handle accordingly
+        if (data.type.localeCompare("status") == 0) {
+            post_status(data.name, data.message);
+        }
+        else if (data.type.localeCompare("msgSend") == 0) {
+            post_message(data.name, data.message, data.iv, false);
+        }
+        else if (data.type.localeCompare("msgRecv") == 0) {
+            post_message(data.name, data.message, data.iv, true);
+        }
+    });
+
+    /*
+        Encrypt input and send event
+    */
+    const send_message = async () => {
+        // Get input
+        const input = document.getElementById("input")
+
+        // If input is empty, do nothing
+        if (input.value == "") {
+            return;
+        }
+
+        // If key has not been generated, send warning to wait until another person joins
+        if (secretKey == null) {
+            const contentDecrypted = `
+            <div class="text">
+                <span>
+                    You may not send a message until another person joins
+                </span>
+            </div>
+            `
+
+            messages.innerHTML += contentDecrypted;
+            return;
+        }
+
+        // Generate random initialization vector per message
+        let iv = crypto.getRandomValues(new Uint8Array(12));
+        // Need to encode input for encryption to work, encodes as UTF-8
+        let encodedInput = encoder.encode(input.value);
+
+        // Encrypt the input
+        const encryptedInput = await crypto.subtle.encrypt(
+            {
+                name: "AES-GCM",
+                iv: iv
+            },
+            secretKey,
+            encodedInput
+        );
+        
+        // Emit a message event and pass encrypted input as data + IV
+        socketio.emit("message", {data: encryptedInput, iv: iv})
+
+        // Increment total number of messages for sender
+        messagesSent += 1;
+        // Clear input
+        input.value = "";
+    };
+
+    /* 
+        Generate new key pairs
+    */
+    socketio.on("keygen", async () => {
+
+        keyPair = await crypto.subtle.generateKey(
+            {
+                name: "ECDH",
+                namedCurve: "P-384",
+            },
+            false,
+            ["deriveKey"]
+        );
+
+        // Need to export the public key as an ArrayBuffer
+        let exportedKey = await crypto.subtle.exportKey("raw", keyPair.publicKey);
+
+        // Send signal to exchange the public keys
+        socketio.emit("exchange", {data: exportedKey})
+    });
+
+    /*
+        Receive the public key and generate the shared secret key
+    */
+    socketio.on("recvKey", async (data) => {
+
+        // Import and store other person's public key
+        otherPublic = await crypto.subtle.importKey(
+            "raw", 
+            data.publicKey,
+            {
+                name: "ECDH",
+                namedCurve: "P-384",
+            },
+            false,
+            []
+        );
+
+        // Derive secret key from personal private key and other public key
+        secretKey = await crypto.subtle.deriveKey(
+            {
+                name: "ECDH",
+                public: otherPublic,
+            },
+            keyPair.privateKey,
+            // ACM-GCM secret key with length of 256 bits
+            {
+                name: "AES-GCM",
+                length: 256,
+            },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    });
+
+    /*
+        Clear key if only one person is in the room
+    */
+   socketio.on("clear", () => {
+        keyPair = null;
+        otherPublic = null;
+        secretKey = null;
+   });
+</script>
+{% endblock %}

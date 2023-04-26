@@ -35,10 +35,6 @@ def start():
         # Use the global variables
         global stored_password
 
-        print(name)
-        print(password)
-        print(stored_password)
-
         # Print errors for missing fields
         if not name:
             return render_template("start.html", error="Please enter a name", name=name)
@@ -91,8 +87,6 @@ def message(data):
     # If chat is not in session, prevent further output
     if stored_password is None:
         return
-    
-    print(data["data"])
     
     # Make dictionary for important aspects of the message
     msg = {"name": session.get("name"), 
@@ -162,14 +156,10 @@ def connect(auth):
     # Have each person join their own room using sid as the name
     session["room"] = request.sid
     join_room(request.sid)
-    print("SID:", request.sid)
-    print("Room:", session["room"])
 
     # Send join message to all members
     for member in members:
         send({"name": name, "message": "has entered", "type": "status"}, to=member)
-
-    print(len(members))
 
     # If both members have joined, generate a new set of keys for both
     if len(members) == 2:

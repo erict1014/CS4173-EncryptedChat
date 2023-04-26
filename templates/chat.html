@@ -91,7 +91,7 @@
             messagesSent += 1;
 
             // If 5 messages reached, send event for keygen and reset count
-            if (messagesSent == 5){
+            if (messagesSent >= 5){
                 socketio.emit("keygen");
                 messagesSent = 0;
             }
@@ -160,6 +160,12 @@
 
         // Increment total number of messages for sender
         messagesSent += 1;
+
+        // If 5 messages sent, reset the count; the receiver will initiate the keygen
+        if (messagesSent >= 5) {
+            messagesSent = 0;
+        }
+
         // Clear input
         input.value = "";
     };
